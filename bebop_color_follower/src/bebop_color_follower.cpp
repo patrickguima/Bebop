@@ -68,14 +68,17 @@ int iHighS = 255; //239 255
 int iLowV = 164;//178 165
 int iHighV = 255;//255 255
 
-int posX,posY = 0;								//Target Position
+int posX,posY = 0;
+int posXRed,posYRed = 0;									//Target Position
 bool no_object = true;								//No Tracked object present
-
+bool no_objectRed = false;
 bool exit_from_cv = false;							//Variable to indicate to exit from OpenCV to ROS
 int tracking_system_armed = 0;
 int landing_system_armed = 0;
-int following_system_armed = 0;								//0 - Drone hovers, 1 - Drone move to the target
+int following_system_armed = 0;
+int follow_orange = 1;								//0 - Drone hovers, 1 - Drone move to the target
 int turning_mode = 0;	
+int forget_red = 0;
 //AutoPicker HSV
 bool auto_detect_hsv = false;
 int pX,pY = 0;
@@ -183,12 +186,42 @@ void sort_blob_by_size(std::vector<cv::KeyPoint> k)
 		posX = big_keypoint_by_size.pt.x;
 		posY = big_keypoint_by_size.pt.y;
 		no_object = false;
+		no_objectRed = false;
 	}
 	else
 	{
 		posX = drone_center.x;
 		posY = drone_center.y;
 		no_object = true;
+		no_objectRed = true;
+		
+	}
+}
+
+
+
+void sort_blob_by_sizeRed(std::vector<cv::KeyPoint> k)
+{
+	cv::KeyPoint big_keypoint_by_size;
+	if(k.size() > 0)
+	{
+		for(int i = 0; i<k.size();i++)
+		{
+			if(k[i].size > big_keypoint_by_size.size)
+			{
+				big_keypoint_by_size = k[i];
+			}
+		}
+		posXRed = big_keypoint_by_size.pt.x;
+		posYRed = big_keypoint_by_size.pt.y;
+		no_objectRed = false;
+	}
+	else
+	{
+		posXRed = drone_center.x;
+		posYRed = drone_center.y;
+		no_objectRed = true;
+		
 	}
 }
 
@@ -223,7 +256,12 @@ cv::Mat detect_blobs(cv::Mat& image)
 	std::vector<cv::KeyPoint> keypoints;
 	cv::Mat cloned_image = image.clone();
 	d->detect(cloned_image,keypoints);
-	sort_blob_by_size(keypoints);
+	if(iHighV==251){
+		sort_blob_by_sizeRed(keypoints);
+	}
+	else{
+		sort_blob_by_size(keypoints);
+	}
 	cv::Mat result;
 	cv::drawKeypoints( cloned_image, keypoints, result, cv::Scalar(0,0,255), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS );
 	return result;
@@ -311,7 +349,7 @@ void move_drone(cv::Mat& image)
 	
 
 
-
+	
 	if (posX >= 0 && posY >= 0)
 	{
 
@@ -357,6 +395,11 @@ void move_drone(cv::Mat& image)
 	}
 	
 
+
+
+	
+
+
 	if(tracking_system_armed)
 	{
 		
@@ -366,10 +409,12 @@ void move_drone(cv::Mat& image)
 		int intFontThickness = 2;
 		//cv::putText(image, "Tracking System ARMED", cv::Point(0,image.cols-175), intFontFace, dblFontScale, cv::Scalar(0,255,0), intFontThickness);
 		cv::putText(image, "Tracking System ARMED", cv::Point(0,image.cols/2), intFontFace, dblFontScale, cv::Scalar(0,255,0), intFontThickness);
+
+
+
 		if(!no_object){
 			//cmd_vel_bebop.linear.x = bebop_velocity;
 			
-
 			if (posY > drone_center.y+30)
 			{	
 				cmd_vel_bebop.linear.x = -bebop_velocity;		
@@ -404,9 +449,17 @@ void move_drone(cv::Mat& image)
 					cmd_vel_bebop.linear.y = 0.0;		
 					cmd_vel_bebop.linear.z = 0.0;
 					cmd_vel_bebop.angular.z = 0.0;
-					land_bebop.publish(land);
-					tracking_system_armed = 0;
 					cmd_vel_pub_bebop.publish(cmd_vel_bebop);
+					land_bebop.publish(land);
+					
+					
+
+					//ros::Duration(5.0).sleep();
+					//takeoff_bebop.publish(take_off);
+					tracking_system_armed = 0;
+					turning_mode= 0 ;
+					following_system_armed = 0;
+
 				
 				}
 			}else{
@@ -498,6 +551,14 @@ void move_drone(cv::Mat& image)
 				//turning_mode = 1 - turning_mode;
 				following_system_armed = 1;
 			}
+			if (angle_to_turn ==440){
+				following_system_armed = 1;
+				angle_to_turn=10;
+				follow_orange =1;
+				forget_red = 1;
+
+
+			}
 			 if (angle_to_turn == 70){
 					//angle_to_turn = 40;
 					turning_speed = -3;
@@ -579,7 +640,9 @@ void move_drone(cv::Mat& image)
 		int intFontThickness = 2;
 		//cv::putText(image, "Tracking System ARMED", cv::Point(0,image.cols-175), intFontFace, dblFontScale, cv::Scalar(0,255,0), intFontThickness);
 		cv::putText(image, "Following System ARMED", cv::Point(0,image.cols/2), intFontFace, dblFontScale, cv::Scalar(0,255,0), intFontThickness);
-		if(!no_object){
+
+
+		if(!no_object && follow_orange){
 			//cmd_vel_bebop.linear.x = bebop_velocity;
 			
 			cmd_vel_bebop.linear.x = 0.17;
@@ -610,6 +673,63 @@ void move_drone(cv::Mat& image)
 
 			
 		}
+
+		if(!no_objectRed && !forget_red){
+			follow_orange = 0;
+			printf("PXred PYred %d %d\n",posXRed,posYRed);
+		//cmd_vel_bebop.linear.x = 0.0;
+		//cmd_vel_bebop.linear.y = 0.0;		
+		//cmd_vel_bebop.linear.z = 0.0;
+		//cmd_vel_bebop.angular.z = 0.0;
+		//cmd_vel_pub_bebop.publish(cmd_vel_bebop);
+		if (posYRed > drone_center.y+20)
+			{	
+				cmd_vel_bebop.linear.x = -bebop_velocity;		
+			}
+			if (posYRed < drone_center.y-20)
+			{	
+				cmd_vel_bebop.linear.x = bebop_velocity;
+			}
+			cmd_vel_pub_bebop.publish(cmd_vel_bebop);
+
+		//cmd_vel_bebop.linear.x = 0.17;
+			if (posXRed > drone_center.x+10)
+			{	
+				//printf("turning left");
+				cmd_vel_bebop.angular.z = -0.1;
+				cmd_vel_bebop.linear.y = -0.2;		
+			}
+			if (posXRed < drone_center.x-10)
+			{	
+				//printf("turning right");
+				cmd_vel_bebop.angular.z = 0.1;
+				cmd_vel_bebop.linear.y = 0.2;
+			}
+			
+
+
+			if ((posX < drone_center.x+10) && (posX > drone_center.x-10) &&(posYRed < drone_center.y+20) &&(posYRed > drone_center.y-20))
+			{
+				following_system_armed =0;
+				turning_mode = 1;
+				angle_to_turn = 440;
+				cmd_vel_bebop.linear.x = 0.0;
+				cmd_vel_bebop.linear.y = 0.0;
+				cmd_vel_bebop.linear.z = 0.0;
+				cmd_vel_bebop.angular.z = 0.0;
+				start_time = time(NULL);
+
+
+			}
+			cmd_vel_pub_bebop.publish(cmd_vel_bebop);
+		}
+
+		if(!no_object && forget_red){
+			//forget_red =0;
+		}
+
+
+		
 		if(no_object){
 			
 				printf("noo object\n");
@@ -786,6 +906,9 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
 	try		
 	{
 		cv_original = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);	//Copying the image and encoding it into BGR according to opencv default settings
+		iHighV = 255;
+		discriminate_color(cv_original->image);
+		iHighV = 251;
 		discriminate_color(cv_original->image);				//Discriminate colors
 		cv::Mat final_img = cv_original->image.clone();			//Clone the original image
 		c_drone(final_img);
@@ -841,7 +964,20 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
 
 		}
 		
+		if (key == 'e'){
+			cmd_vel_bebop.linear.x = 0.0;
+			cmd_vel_bebop.linear.y = 0.0;
+			cmd_vel_bebop.linear.z = 0.0;
+			cmd_vel_bebop.angular.z = 0.0;
+			cmd_vel_pub_bebop.publish(cmd_vel_bebop);
 
+			tracking_system_armed = 0;
+			turning_mode= 0 ;
+			following_system_armed = 0;
+
+
+		}
+		
 
 
 		
