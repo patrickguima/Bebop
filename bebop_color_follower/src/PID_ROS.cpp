@@ -23,7 +23,7 @@ Vo=ekt;
 Xo=der;
 
 resultado = PID::control(ekt, integ, der);
-
+/*
 if(resultado > 0)
 {
 	resultado = resultado*(0.10);
@@ -36,7 +36,7 @@ else
 	if(resultado < -0.20){resultado = -0.20;}
 	else{resultado = resultado;}
 }
-
+*/
 return resultado;
 }
 

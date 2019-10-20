@@ -25,7 +25,10 @@ include_directories(include ${catkin_INCLUDE_DIRS})
 include_directories(${OpenCV_INCLUDE_DIRS})
 #add_dependencies(bebop_test_src ${catkin_EXPORTED_TARGETS})
 add_executable(bebop_color_follower src/bebop_color_follower.cpp src/PID_ROS.cpp src/ArcDrone.cpp)
+add_executable(bebop_color_follower2 src/bebop_color_follower2.cpp src/PID_ROS.cpp src/ArcDrone.cpp)
 target_link_libraries(bebop_color_follower ${catkin_LIBRARIES})
 target_link_libraries(bebop_color_follower ${OpenCV_LIBRARIES})
+target_link_libraries(bebop_color_follower2 ${catkin_LIBRARIES})
+target_link_libraries(bebop_color_follower2 ${OpenCV_LIBRARIES})
 
 

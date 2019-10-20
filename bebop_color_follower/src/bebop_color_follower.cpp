@@ -22,7 +22,9 @@
 #include <time.h>
 #define PI 3.141592653589793238462
 static const std::string OPENCV_ORIGINAL = "Bebop camera window";		//Original image 
-static const std::string OPENCV_BINARY = "Binary window";			//Binary image
+static const std::string OPENCV_BINARY = "Binary window";
+static const std::string OPENCV_BINARYLINE = "Binary window Line";	
+static const std::string OPENCV_BINARYRED = "Binary window Red";			//Binary image
 bool active = true;
 const double max_obj_area = 10000000; 						//Maximum area reference of the object
 const double min_obj_area = 100;						//Minimum area reference of the object
@@ -30,12 +32,12 @@ const double bebop_velocity = 0.17;						//Bebop general velocity
 const double bebop_turn_velocity = 0.42;					//Bebop general turn velocity
 const double area_distance = 30;						//The area determines the proximity of the camera to the object/noise
 double dArea;									//Holds the general area of the objects at the imageconst
-
+int bebop_value = 1;
 float turning_speed = 3;
 float angle_to_turn = 10;
 time_t start_time =0;
 time_t end_time = 0;
-
+bool first_object = true;
 //Heading Variables
 float _heading;
 float _heading_t;
@@ -60,25 +62,30 @@ bebop_simple_test::Altitude alt;
 cv_bridge::CvImagePtr cv_original;						//Original image container 
 
 int iLowH = 0;		//5	//	90				//Default HSV range values
-int iHighH = 42;//16	150
+int iHighH = 0;//16	150
 
-int iLowS = 180; //177 180
-int iHighS = 255; //239 255
+int iLowS = 0; //177 180
+int iHighS = 0; //239 255
 
-int iLowV = 164;//178 165
-int iHighV = 255;//255 255
+int iLowV = 0;//178 165
+int iHighV = 0;//255 255
 
 int posX,posY = 0;
+int posXCano,posYCano = 0;
 int posXRed,posYRed = 0;									//Target Position
-bool no_object = true;								//No Tracked object present
+bool no_object = true;
+bool no_objectCano = true;									//No Tracked object present
 bool no_objectRed = false;
 bool exit_from_cv = false;							//Variable to indicate to exit from OpenCV to ROS
 int tracking_system_armed = 0;
 int landing_system_armed = 0;
 int following_system_armed = 0;
+int following_red_armed = 0;
+int turning_mode360 = 0;
+int landing_mode = 0;
 int follow_orange = 1;								//0 - Drone hovers, 1 - Drone move to the target
 int turning_mode = 0;	
-int forget_red = 0;
+int forget_red = 1;
 //AutoPicker HSV
 bool auto_detect_hsv = false;
 int pX,pY = 0;
@@ -186,21 +193,46 @@ void sort_blob_by_size(std::vector<cv::KeyPoint> k)
 		posX = big_keypoint_by_size.pt.x;
 		posY = big_keypoint_by_size.pt.y;
 		no_object = false;
-		no_objectRed = false;
+	 //	no_objectRed = false;
 	}
 	else
 	{
 		posX = drone_center.x;
 		posY = drone_center.y;
 		no_object = true;
-		no_objectRed = true;
+		//no_objectRed = true;
 		
 	}
 }
 
 
 
-void sort_blob_by_sizeRed(std::vector<cv::KeyPoint> k)
+void sort_blob_by_sizeCano(std::vector<cv::KeyPoint> k)
+{
+	cv::KeyPoint big_keypoint_by_size;
+	if(k.size() > 0)
+	{
+		for(int i = 0; i<k.size();i++)
+		{
+			if(k[i].size > big_keypoint_by_size.size)
+			{
+				big_keypoint_by_size = k[i];
+			}
+		}
+		posXCano = big_keypoint_by_size.pt.x;
+		posYCano = big_keypoint_by_size.pt.y;
+		no_objectCano = false;
+	}
+	else
+	{
+		posXCano = drone_center.x;
+		posYCano = drone_center.y;
+		no_objectCano = true;
+		
+	}
+}
+
+void sort_blob_by_sizeRED(std::vector<cv::KeyPoint> k)
 {
 	cv::KeyPoint big_keypoint_by_size;
 	if(k.size() > 0)
@@ -256,17 +288,69 @@ cv::Mat detect_blobs(cv::Mat& image)
 	std::vector<cv::KeyPoint> keypoints;
 	cv::Mat cloned_image = image.clone();
 	d->detect(cloned_image,keypoints);
-	if(iHighV==251){
-		sort_blob_by_sizeRed(keypoints);
-	}
-	else{
-		sort_blob_by_size(keypoints);
-	}
+	
+	sort_blob_by_size(keypoints);
+	cv::Mat result;
+	cv::drawKeypoints( cloned_image, keypoints, result, cv::Scalar(0,0,255), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS );
+	return result;
+}
+cv::Mat detect_blobs2(cv::Mat& image)
+{
+	cv::SimpleBlobDetector::Params params;
+	params.minThreshold = 10;
+	params.maxThreshold = 200;
+ 
+	params.filterByArea = true;
+	params.minArea = min_obj_area;
+	params.maxArea = max_obj_area;
+
+	params.filterByColor = true;
+	params.blobColor = 255;
+ 
+	params.filterByCircularity = false;
+ 
+	params.filterByConvexity = false;
+ 
+	params.filterByInertia = false;
+	cv::Ptr<cv::SimpleBlobDetector> d = cv::SimpleBlobDetector::create(params);
+	std::vector<cv::KeyPoint> keypoints;
+	cv::Mat cloned_image = image.clone();
+	d->detect(cloned_image,keypoints);
+	
+	sort_blob_by_sizeCano(keypoints);
 	cv::Mat result;
 	cv::drawKeypoints( cloned_image, keypoints, result, cv::Scalar(0,0,255), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS );
 	return result;
 }
 
+cv::Mat detect_blobs3(cv::Mat& image)
+{
+	cv::SimpleBlobDetector::Params params;
+	params.minThreshold = 10;
+	params.maxThreshold = 200;
+ 
+	params.filterByArea = true;
+	params.minArea = min_obj_area;
+	params.maxArea = max_obj_area;
+
+	params.filterByColor = true;
+	params.blobColor = 255;
+ 
+	params.filterByCircularity = false;
+ 
+	params.filterByConvexity = false;
+ 
+	params.filterByInertia = false;
+	cv::Ptr<cv::SimpleBlobDetector> d = cv::SimpleBlobDetector::create(params);
+	std::vector<cv::KeyPoint> keypoints;
+	cv::Mat cloned_image = image.clone();
+	d->detect(cloned_image,keypoints);
+	
+	sort_blob_by_sizeRED(keypoints);
+	cv::Mat result;
+	cv::drawKeypoints( cloned_image, keypoints, result, cv::Scalar(0,0,255), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS );
+	return result;
+}
 void discriminate_color(cv::Mat& image)
 {
 	cv::namedWindow(OPENCV_BINARY);						//Creating Control Interface
@@ -284,8 +368,10 @@ void discriminate_color(cv::Mat& image)
 	cv::Mat imgHSV;								//HSV Image Container
 	cv::cvtColor(cv_original->image, imgHSV, cv::COLOR_BGR2HSV);		//Convert BGR to HSV Color Space
 
-	cv::Mat imgThresholded;
-	cv::inRange(imgHSV, cv::Scalar(iLowH, iLowS, iLowV), cv::Scalar(iHighH, iHighS, iHighV), imgThresholded);
+	cv::Mat imgThresholded,imgThresholded2,imgThresholded3;
+	cv::inRange(imgHSV, cv::Scalar(90, 180,110), cv::Scalar(150, 255,255), imgThresholded2);
+	cv::inRange(imgHSV, cv::Scalar(0, 101,100), cv::Scalar(58, 251, 255), imgThresholded3);
+	cv::bitwise_or(imgThresholded2,imgThresholded3,imgThresholded);
 	//ROS_INFO("LowH: %d LowS: %d LowV: %d HighH: %d HighS: %d HighV: %d",iLowH, iLowS, iLowV,iHighH, iHighS, iHighV);
 
 	cv::erode(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));	//Morphology Operations
@@ -316,6 +402,245 @@ void discriminate_color(cv::Mat& image)
 	contours.clear();
 	convexHulls.clear();
 }
+
+void discriminate_color2(cv::Mat& image)
+{
+	cv::namedWindow(OPENCV_BINARY);						//Creating Control Interface
+	cv::createTrackbar("LowH", OPENCV_BINARY, &iLowH, 180);
+	cv::createTrackbar("HighH",OPENCV_BINARY, &iHighH, 180);
+
+	cv::createTrackbar("LowS", OPENCV_BINARY, &iLowS, 255);
+	cv::createTrackbar("HighS", OPENCV_BINARY, &iHighS, 255);
+
+	cv::createTrackbar("LowV", OPENCV_BINARY, &iLowV, 255);
+	cv::createTrackbar("HighV", OPENCV_BINARY, &iHighV, 255);
+	
+	if(auto_detect_hsv){auto_pick_HSV(image);}				//AutoPicker HSV 
+
+	cv::Mat imgHSV;								//HSV Image Container
+	cv::cvtColor(cv_original->image, imgHSV, cv::COLOR_BGR2HSV);		//Convert BGR to HSV Color Space
+
+	cv::Mat imgThresholded;
+	cv::inRange(imgHSV, cv::Scalar(0,180, 164), cv::Scalar(42, 255, 255), imgThresholded);
+	//ROS_INFO("LowH: %d LowS: %d LowV: %d HighH: %d HighS: %d HighV: %d",iLowH, iLowS, iLowV,iHighH, iHighS, iHighV);
+
+	cv::erode(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));	//Morphology Operations
+	cv::dilate(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+	cv::erode(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+	cv::dilate(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+
+	cv::blur(imgThresholded,imgThresholded,cv::Size(5,5));			//Basic Filtering
+	
+	cv::Mat cntr = imgThresholded.clone();					//Contours container
+	std::vector<std::vector<cv::Point> > contours;				//Contours vector
+	cv::findContours(cntr, contours, CV_RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);	//Find contours
+	cv::drawContours(cntr, contours, -1, cv::Scalar(255, 255, 255), -1);		//Draw contours
+	std::vector<std::vector<cv::Point> > convexHulls(contours.size());
+	for (unsigned int i = 0; i < contours.size(); i++) 			//Find Convex Hulls
+	{
+		cv::convexHull(contours[i], convexHulls[i]);
+	}
+	cv::Mat conv(cntr.size(), CV_8UC3, cv::Scalar(0, 0, 0));		//Convex Hulls container
+	cv::drawContours(conv, convexHulls, -1, cv::Scalar(255, 255, 255), -1); //Draw Convex Hulls
+	cv::dilate(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(10, 10)));	//Closing gaps
+	cv::erode(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(10, 10)));
+	cv:cvtColor(conv,conv,cv::COLOR_BGR2GRAY);				//Convert to 1-channel image
+	cv::Mat blobs = detect_blobs2(conv);					//Detect the blobs in the image, returns the image with detected blobs
+	cv::imshow(OPENCV_BINARYLINE,blobs);					//Show binary image with blobs
+	cv::Moments mu = moments(imgThresholded);						//Calculate moments
+	dArea=mu.m00;								//Area that determines if the drone is near the target and stop it
+	contours.clear();
+	convexHulls.clear();
+}
+
+void discriminate_color3(cv::Mat& image)
+{
+	cv::namedWindow(OPENCV_BINARY);						//Creating Control Interface
+	cv::createTrackbar("LowH", OPENCV_BINARY, &iLowH, 180);
+	cv::createTrackbar("HighH",OPENCV_BINARY, &iHighH, 180);
+
+	cv::createTrackbar("LowS", OPENCV_BINARY, &iLowS, 255);
+	cv::createTrackbar("HighS", OPENCV_BINARY, &iHighS, 255);
+
+	cv::createTrackbar("LowV", OPENCV_BINARY, &iLowV, 255);
+	cv::createTrackbar("HighV", OPENCV_BINARY, &iHighV, 255);
+	
+	if(auto_detect_hsv){auto_pick_HSV(image);}				//AutoPicker HSV 
+
+	cv::Mat imgHSV;								//HSV Image Container
+	cv::cvtColor(cv_original->image, imgHSV, cv::COLOR_BGR2HSV);		//Convert BGR to HSV Color Space
+
+	cv::Mat imgThresholded,imgThresholded2,imgThresholded3;;
+	cv::inRange(imgHSV, cv::Scalar(0,180, 110), cv::Scalar(10,255, 255), imgThresholded2);
+	//ROS_INFO("LowH: %d LowS: %d LowV: %d HighH: %d HighS: %d HighV: %d",iLowH, iLowS, iLowV,iHighH, iHighS, iHighV);
+	cv::inRange(imgHSV, cv::Scalar(0,180, 164), cv::Scalar(42, 255, 255), imgThresholded3);
+
+	cv::bitwise_and(imgThresholded2,imgThresholded3,imgThresholded);
+
+	cv::erode(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));	//Morphology Operations
+	cv::dilate(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+	cv::erode(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+	cv::dilate(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+
+	cv::blur(imgThresholded,imgThresholded,cv::Size(5,5));			//Basic Filtering
+	
+	cv::Mat cntr = imgThresholded.clone();					//Contours container
+	std::vector<std::vector<cv::Point> > contours;				//Contours vector
+	cv::findContours(cntr, contours, CV_RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);	//Find contours
+	cv::drawContours(cntr, contours, -1, cv::Scalar(255, 255, 255), -1);		//Draw contours
+	std::vector<std::vector<cv::Point> > convexHulls(contours.size());
+	for (unsigned int i = 0; i < contours.size(); i++) 			//Find Convex Hulls
+	{
+		cv::convexHull(contours[i], convexHulls[i]);
+	}
+	cv::Mat conv(cntr.size(), CV_8UC3, cv::Scalar(0, 0, 0));		//Convex Hulls container
+	cv::drawContours(conv, convexHulls, -1, cv::Scalar(255, 255, 255), -1); //Draw Convex Hulls
+	cv::dilate(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(10, 10)));	//Closing gaps
+	cv::erode(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(10, 10)));
+	cv:cvtColor(conv,conv,cv::COLOR_BGR2GRAY);				//Convert to 1-channel image
+	cv::Mat blobs = detect_blobs3(conv);					//Detect the blobs in the image, returns the image with detected blobs
+	cv::imshow(OPENCV_BINARYRED,blobs);					//Show binary image with blobs
+	cv::Moments mu = moments(imgThresholded);						//Calculate moments
+	dArea=mu.m00;								//Area that determines if the drone is near the target and stop it
+	contours.clear();
+	convexHulls.clear();
+}
+
+
+void discriminate_colorLine(cv::Mat& image)
+{	
+
+	int largest_area=0;
+ 	int largest_contour_index=-1;
+
+	cv::namedWindow(OPENCV_BINARYLINE);						//Creating Control Interface
+	
+	cv::Mat imgHSV,imgRGB,orangeMask,result_orange,grey;
+	cv::cvtColor(cv_original->image, imgRGB, cv::COLOR_BGR2RGB);								//HSV Image Container
+	cv::cvtColor(cv_original->image, imgHSV, cv::COLOR_BGR2HSV);
+	//cv::cvtColor(imgRGB, grey, cv::COLOR_RGB2GREY);				//Convert BGR to HSV Color Space
+
+	cv::Mat imgThresholded;
+	cv::inRange(imgHSV, cv::Scalar(5, 177, 178), cv::Scalar(16, 239, 255), orangeMask);
+	//ROS_INFO("LowH: %d LowS: %d LowV: %d HighH: %d HighS: %d HighV: %d",iLowH, iLowS, iLowV,iHighH, iHighS, iHighV);
+	cv::bitwise_and(imgRGB,imgRGB,result_orange,orangeMask);
+	cv::erode(result_orange, result_orange, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5)));	//Morphology Operations
+
+	cv::dilate(result_orange, result_orange, cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5)));
+	//cv::erode(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+	//cv::dilate(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
+
+	//cv::blur(imgThresholded,imgThresholded,cv::Size(5,5));			//Basic Filtering
+	
+	cv::Mat cntr = orangeMask.clone();					//Contours container
+	std::vector<std::vector<cv::Point> > contours;				//Contours vector
+	cv::findContours(cntr, contours, CV_RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);	//Find contours
+	cv::drawContours(cntr, contours, -1, cv::Scalar(0, 0, 255), 3);		//Draw contours
+	//std::vector<std::vector<cv::Point> > convexHulls(contours.size());
+	for (unsigned int i = 0; i < contours.size(); i++) 			//Find Convex Hulls
+	{
+		double a=cv::contourArea( contours[i],false);  //  Find the area of contour
+       if(a > largest_area){
+       		largest_area=a;
+       		largest_contour_index=i;   
+   		}
+
+		cv::Moments M = moments(contours[i]);
+		if (M.m00 != 0) {
+    		cv::Point p1(M.m10/M.m00, M.m01/M.m00);
+    		
+    		posX = M.m10/M.m00;
+    		posY = M.m01/M.m00;
+   			cv::circle(imgRGB, p1, 5, cv::Scalar(255, 255, 255), -1);
+
+   			//cv::Point p2(M.m10, M.m01);
+   			//cv::circle(imgRGB, p2, 5, cv::Scalar(0, 255, 0), -1);
+   			
+   			
+  		}else{
+  		 	cv::Point p1(drone_center.x,drone_center.y);
+  		 	posX = drone_center.x;
+  		 	posY = drone_center.y;
+  		 	cv::circle(imgRGB, p1, 5, cv::Scalar(155, 200, 0), -1);
+  		 	
+
+  		}
+		//cv::convexHull(contours[i], convexHulls[i]);
+		
+
+
+	}
+
+	printf("objeto %d \n",no_object);
+	
+	
+	if(largest_contour_index !=-1){
+		no_object=false;
+		cv::Point extLeft  = *min_element(contours[largest_contour_index].begin(), contours[largest_contour_index].end(), 
+                      [](const cv::Point& lhs, const cv::Point& rhs) {
+                          return lhs.x < rhs.x;
+                  });
+
+		cv::Point extRight = *max_element(contours[largest_contour_index].begin(), contours[largest_contour_index].end(),
+                      [](const cv::Point& lhs, const cv::Point& rhs) {
+                          return lhs.x < rhs.x;
+                  });
+		cv::Point extTop   = *min_element(contours[largest_contour_index].begin(), contours[largest_contour_index].end(), 
+                      [](const cv::Point& lhs, const cv::Point& rhs) {
+                          return lhs.y < rhs.y;
+                  }); 
+		cv::Point extBot   = *max_element(contours[largest_contour_index].begin(), contours[largest_contour_index].end(),
+                      [](const cv::Point& lhs, const cv::Point& rhs) {
+                          return lhs.y < rhs.y;
+                  });
+
+
+		cv::Point p3(extLeft);
+		cv::Point p4(extRight);
+		cv::Point p5(extTop);
+		cv::Point p6(extBot);
+		cv::circle(imgRGB, p3, 5, cv::Scalar(0, 0, 255), -1);
+		cv::circle(imgRGB, p4, 5, cv::Scalar(0, 0, 255), -1);
+		cv::circle(imgRGB, p5, 5, cv::Scalar(0, 0, 255), -1);
+		cv::circle(imgRGB, p6, 5, cv::Scalar(0, 0, 255), -1);
+
+
+		cv::circle(imgRGB, cv::Point(p3.x+p5.x/2,p3.y+p5.y/2), 5, cv::Scalar(0, 255, 255), -1);
+		cv::circle(imgRGB,  cv::Point(p4.x+p6.x/2,p4.y+p6.y/2), 5, cv::Scalar(0, 255, 255), -1);
+	
+		
+	}
+	else{
+
+		no_object = true;
+	}
+	//printf("pos %d %d\n",posX,posY);
+	//cv::Point p2(M.m10/M.m00, M.m01/M.m00);
+   	//cv::circle(imgRGB, p1, 5, cv::Scalar(255, 255, 255), -1);
+	//cv::drawContours(imgRGB, contours,largest_contour_index, cv::Scalar(0, 0, 255), 3);	
+	cv::imshow(OPENCV_BINARYLINE,imgRGB);
+	//cv::Mat conv(cntr.size(), CV_8UC3, cv::Scalar(0, 0, 0));		//Convex Hulls container
+	//cv::drawContours(cntr, , -1, cv::Scalar(255, 255, 255), -1); //Draw Convex Hulls
+	//cv::dilate(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(10, 10)));	//Closing gaps
+	//cv::erode(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(10, 10)));
+	//cv:cvtColor(conv,conv,cv::COLOR_BGR2GRAY);				//Convert to 1-channel image
+	//qcv::Mat blobs = detect_blobs(conv);					//Detect the blobs in the image, returns the image with detected blobs
+	//cv::imshow(OPENCV_BINARY,blobs);					//Show binary image with blobs
+	//cv::Moments mu = moments(imgThresholded);						//Calculate moments
+
+
+	
+	//dArea=mu.m00;								//Area that determines if the drone is near the target and stop it
+	contours.clear();
+	//convexHulls.clear();
+}
+
+
+
+
+
+
+
 void get_heading(float _orientationX, float _orientationY , float _orientationZ, float _orientationW)
 {
 	double roll;
@@ -412,39 +737,178 @@ void move_drone(cv::Mat& image)
 
 
 
+		if(!no_objectCano && !first_object){
+			//cmd_vel_bebop.linear.x = bebop_velocity;
+			//printf("AKI NAO ERA PRA ENTRAR\n");
+			
+			if (posYCano > drone_center.y+20)
+			{	
+				cmd_vel_bebop.linear.x = -0.1/bebop_value;		
+			}else{
+				if (posYCano < drone_center.y-20)
+				{	
+					cmd_vel_bebop.linear.x = 0.1/bebop_value;
+				}
+				else{
+					//printf("meu VALOR %f\n",(0.1*int(drone_center.x-posX)/100));
+					cmd_vel_bebop.linear.x = ((0.1/bebop_value)*int(drone_center.x-posX)/100);
+				}
+			}
+		
+
+			
+
+
+			//if (Turns==1){
+
+				if (posXCano > drone_center.x+30)
+					{
+					
+					cmd_vel_bebop.angular.z = -0.3/bebop_value;
+					cmd_vel_bebop.linear.y = -0.2/bebop_value;		
+				}else{
+					if (posXCano < drone_center.x-30)
+						{
+						printf("absoluto2 %f\n", pid_alt.mis(std::abs(int(drone_center.x-posX)),0)/100);	
+						//printf("POS x, %d\n", posX);	
+						//printf("absoluto2 %d\n",std::abs(int(posX-drone_center.x)));	
+				//printf("turning right");
+						cmd_vel_bebop.angular.z = 0.3/bebop_value;
+						cmd_vel_bebop.linear.y = 0.2/bebop_value;
+						}
+					else{
+					
+							cmd_vel_bebop.angular.z = ((0.3/bebop_value)*int(drone_center.x-posX)/100);
+							cmd_vel_bebop.linear.y = ((0.2/bebop_value)*int(drone_center.x-posX)/100);
+							printf("meu VALOR %f\n",cmd_vel_bebop.linear.y);
+						
+				
+						}
+					}
+
+					
+				if ((posXCano < drone_center.x+20) && (posXCano > drone_center.x-20) &&(posYCano < drone_center.y+20) &&(posYCano > drone_center.y-20) ){
+					cmd_vel_bebop.linear.x = 0.0;
+					cmd_vel_bebop.linear.y = 0.0;		
+					cmd_vel_bebop.linear.z = 0.0;
+					cmd_vel_bebop.angular.z = 0.0;
+					//cmd_vel_pub_bebop.publish(cmd_vel_bebop);
+					//land_bebop.publish(land);
+					start_time=time(NULL);
+					
+
+					//ros::Duration(5.0).sleep();
+					//takeoff_bebop.publish(take_off);
+					//ros::Duration(5.0).sleep();
+					tracking_system_armed = 0;
+					turning_mode= 1 ;
+					landing_mode = 0;
+					angle_to_turn = 10;
+					following_system_armed = 0;
+
+				
+				}
+	
+	
+					cmd_vel_pub_bebop.publish(cmd_vel_bebop);
+			}
+
+		
+		if(!no_objectCano && first_object){
+			cmd_vel_bebop.linear.x = 0.5/bebop_value;
+			cmd_vel_bebop.linear.y = 0.0;
+			cmd_vel_bebop.angular.z = 0.0;
+			
+			//if (Turns==1){
+			//	cmd_vel_bebop.linear.z = 0.01;
+			//}
+			cmd_vel_pub_bebop.publish(cmd_vel_bebop);
+
+
+		
+		}
+		if(no_objectCano){
+			first_object = false;
+			cmd_vel_bebop.linear.x = 0.5/bebop_value;
+			cmd_vel_bebop.linear.y = 0.0;
+			cmd_vel_bebop.angular.z = 0.0;
+			
+			//if (Turns==1){
+			//	cmd_vel_bebop.linear.z = 0.01;
+			//}
+			cmd_vel_pub_bebop.publish(cmd_vel_bebop);
+
+
+		
+		}
+
+	}
+	else
+	{
+		//hover();	
+	}
+
+
+
+
+
+	if(landing_mode)
+	{
+		
+		int intFontFace = CV_FONT_HERSHEY_SIMPLEX;
+		//double dblFontScale = 0.75;
+		double dblFontScale = 1;
+		int intFontThickness = 2;
+		//cv::putText(image, "Tracking System ARMED", cv::Point(0,image.cols-175), intFontFace, dblFontScale, cv::Scalar(0,255,0), intFontThickness);
+		cv::putText(image, "Landing System ARMED", cv::Point(0,image.cols/2), intFontFace, dblFontScale, cv::Scalar(0,255,0), intFontThickness);
+
+
 		if(!no_object){
 			//cmd_vel_bebop.linear.x = bebop_velocity;
+			//printf("AKI NAO ERA PRA ENTRAR\n");
 			
 			if (posY > drone_center.y+30)
 			{	
-				cmd_vel_bebop.linear.x = -bebop_velocity;		
-			}
-			if (posY < drone_center.y-30)
-			{	
-				cmd_vel_bebop.linear.x = bebop_velocity;
-			}
-			cmd_vel_pub_bebop.publish(cmd_vel_bebop);
-
-			
-
-
-			if (Turns==1){
-
-				if (posX > drone_center.x+30)
-					{	
-				//printf("turning left");
-					cmd_vel_bebop.angular.z = -0.3;
-					cmd_vel_bebop.linear.y = -0.2;		
+				cmd_vel_bebop.linear.x = -0.1/bebop_value;		
+			}else{
+				if (posY < drone_center.y-30)
+				{	
+					cmd_vel_bebop.linear.x = 0.1/bebop_value;
 				}
-				if (posX < drone_center.x-30)
-					{	
+				else{
+					//printf("meu VALOR %f\n",(0.1*int(drone_center.x-posX)/100));
+					cmd_vel_bebop.linear.x = ((0.1/bebop_value)*int(drone_center.x-posX)/100);
+				}
+			}
+		
+
+				if (posX > drone_center.x+50)
+					{
+					
+					cmd_vel_bebop.angular.z = -0.3/bebop_value;
+					cmd_vel_bebop.linear.y = -0.2/bebop_value;		
+				}else{
+					if (posX < drone_center.x-50)
+						{
+						printf("absoluto2 %f\n", pid_alt.mis(std::abs(int(drone_center.x-posX)),0)/100);	
+						//printf("POS x, %d\n", posX);	
+						//printf("absoluto2 %d\n",std::abs(int(posX-drone_center.x)));	
 				//printf("turning right");
-					cmd_vel_bebop.angular.z = 0.3;
-					cmd_vel_bebop.linear.y = 0.2;
+						cmd_vel_bebop.angular.z = 0.3/bebop_value;
+						cmd_vel_bebop.linear.y = 0.2/bebop_value;
+						}
+					else{
+					
+							cmd_vel_bebop.angular.z = ((0.3/bebop_value)*int(drone_center.x-posX)/100);
+							cmd_vel_bebop.linear.y = ((0.2/bebop_value)*int(drone_center.x-posX)/100);
+							printf("meu VALOR %f\n",cmd_vel_bebop.linear.y);
+						
+				
+						}
 					}
 
-
-				if ((posY < drone_center.y+10) && (posY > drone_center.y-10) ){
+					
+				if ((posX < drone_center.x+20) && (posX > drone_center.x-20) &&(posY < drone_center.y+20) &&(posY > drone_center.y-20) ){
 					cmd_vel_bebop.linear.x = 0.0;
 					cmd_vel_bebop.linear.y = 0.0;		
 					cmd_vel_bebop.linear.z = 0.0;
@@ -452,69 +916,28 @@ void move_drone(cv::Mat& image)
 					cmd_vel_pub_bebop.publish(cmd_vel_bebop);
 					land_bebop.publish(land);
 					
-					
-
-					//ros::Duration(5.0).sleep();
-					//takeoff_bebop.publish(take_off);
 					tracking_system_armed = 0;
 					turning_mode= 0 ;
+					landing_mode = 0;
 					following_system_armed = 0;
 
 				
 				}
-			}else{
-				if (posX > drone_center.x+30)
-					{	
-				//printf("turning left");
-					cmd_vel_bebop.angular.z = -0.2;
-					cmd_vel_bebop.linear.y = -0.1;		
-				}
-				if (posX < drone_center.x-30)
-					{	
-				//printf("turning right");
-					cmd_vel_bebop.angular.z = 0.2;
-					cmd_vel_bebop.linear.y = 0.1;
-					}
-
-				if ((posY < drone_center.y+10) && (posY > drone_center.y-10)){
-				//land_bebop.publish(land);
-				//tracking_system_armed = 1 - tracking_system_armed;
-				
-					tracking_system_armed = 0;
-					turning_mode = 1;
-					start_time = time(NULL);
-				}
-				
+	
+	
+					cmd_vel_pub_bebop.publish(cmd_vel_bebop);
 			}
-			
+			if(no_object){
+				cmd_vel_bebop.linear.x = 0.5/bebop_value;
+				cmd_vel_bebop.linear.y = 0.0;		
+				cmd_vel_bebop.linear.z = 0.0;
+				cmd_vel_bebop.angular.z = 0.0;
+				cmd_vel_pub_bebop.publish(cmd_vel_bebop);
 
-		}
 
-		
-		if(no_object){
-			cmd_vel_bebop.linear.x = 0.5;
-			cmd_vel_bebop.linear.y = 0.0;
-			cmd_vel_bebop.angular.z = 0.0;
-			
-			if (Turns==1){
-				cmd_vel_bebop.linear.z = 0.01;
+
 			}
-			cmd_vel_pub_bebop.publish(cmd_vel_bebop);
 
-
-		
-		}
-		//if(dArea < area_distance && !no_object)
-		//{
-			//cmd_vel_bebop.linear.x = bebop_velocity;
-			//cmd_vel_pub_bebop.publish(cmd_vel_bebop);
-			//cv::putText(image, "<Following>", cv::Point(image.rows-20,image.cols-175), intFontFace, dblFontScale, cv::Scalar(0,255,255), intFontThickness);
-		//cv::putText(image, "<Following>", cv::Point(image.rows-20,image.cols/2), intFontFace, dblFontScale, cv::Scalar(0,255,255), intFontThickness);
-		
-		//else if(!(dArea < area_distance) && !no_object){turn();}
-		//else if(goo>10 && turns==0 && !no_object){turn();}
-	//}
-		//else if(!(dArea < area_distance) && no_object){hover();}
 	}
 	else
 	{
@@ -545,90 +968,68 @@ void move_drone(cv::Mat& image)
 			printf("HERE\n");	
 			cmd_vel_bebop.linear.x = 0;
 			cmd_vel_bebop.linear.y = 0;
+			cmd_vel_bebop.linear.z = 0;
 			cmd_vel_bebop.angular.z = 0;
 			cmd_vel_pub_bebop.publish(cmd_vel_bebop); 
-			if (angle_to_turn==10 || angle_to_turn==180){
-				//turning_mode = 1 - turning_mode;
-				following_system_armed = 1;
-			}
-			if (angle_to_turn ==440){
-				following_system_armed = 1;
-				angle_to_turn=10;
-				follow_orange =1;
-				forget_red = 1;
-
-
-			}
-			 if (angle_to_turn == 70){
-					//angle_to_turn = 40;
-					turning_speed = -3;
-					tracking_system_armed = 1;
-					Turns = 1;
-					following_system_armed = 0;
-
-					 iLowH = 90;		//5	//	90				//Default HSV range values
-					iHighH = 150;//16	150
-
-					iLowS = 180; //177 180
-					iHighS = 255; //239 255
-
-					iLowV = 165;//178 165
-					iHighV = 255;//255 255
-				}
 			
-				
-
+			//following_system_armed = 1;
+			
+			if( Turns==2){
+				landing_mode = 1;
+			}else{
+				following_system_armed = 1;
+			}
+		
 
 			
 			
 		}
                 
-		/*
-		if(!no_object){
-			//cmd_vel_bebop.linear.x = bebop_velocity;
-			
-			cmd_vel_bebop.linear.x = 0.0;
-			cmd_vel_bebop.linear.y = 0.0;
-			cmd_vel_bebop.angular.z = 0.1; 
-			cmd_vel_pub_bebop.publish(cmd_vel_bebop);
-			goo +=1;
-			if(goo>=150){
-				cmd_vel_bebop.linear.x = 0.0;
-				cmd_vel_bebop.linear.y = 0.0;
-				cmd_vel_bebop.linear.z = 0.0;
-				turning_mode = 1 - turning_mode;
-				following_system_armed = 1 - following_system_armed;
-			}
 		
-		}
-		if(no_object){
-			cmd_vel_bebop.linear.x = 0.0;
-			cmd_vel_bebop.linear.y = 0.0;
-			cmd_vel_bebop.linear.z = 0.0;
-			cmd_vel_bebop.angular.z = 0.5;
-			cmd_vel_pub_bebop.publish(cmd_vel_bebop);
-
-
-
-
-		
-		}
-		//if(dArea < area_distance && !no_object)
-		//{
-			//cmd_vel_bebop.linear.x = bebop_velocity;
-			//cmd_vel_pub_bebop.publish(cmd_vel_bebop);
-			//cv::putText(image, "<Following>", cv::Point(image.rows-20,image.cols-175), intFontFace, dblFontScale, cv::Scalar(0,255,255), intFontThickness);
-		//cv::putText(image, "<Following>", cv::Point(image.rows-20,image.cols/2), intFontFace, dblFontScale, cv::Scalar(0,255,255), intFontThickness);
-		
-		//else if(!(dArea < area_distance) && !no_object){turn();}
-		//else if(goo>10 && turns==0 && !no_object){turn();}
-	//}
-		//else if(!(dArea < area_distance) && no_object){hover();}
 	}
-	else
+
+
+
+	if(turning_mode360)
 	{
-		//hover();	*/
+		
+		int intFontFace = CV_FONT_HERSHEY_SIMPLEX;
+		//double dblFontScale = 0.75;
+		double dblFontScale = 1;
+		int intFontThickness = 2;
+		//cv::putText(image, "Tracking System ARMED", cv::Point(0,image.cols-175), intFontFace, dblFontScale, cv::Scalar(0,255,0), intFontThickness);
+		cv::putText(image, "Turning System ARMED", cv::Point(0,image.cols/2), intFontFace, dblFontScale, cv::Scalar(0,255,0), intFontThickness);
+
+		//printf("time %f\n",start_time);
+		cmd_vel_bebop.linear.x = 0.0;
+		cmd_vel_bebop.linear.y = 0.0;
+		cmd_vel_bebop.angular.z = turning_speed; 
+		end_time = time(NULL);
+		//printf("time %f\n",end_time - start_time);
+		cmd_vel_pub_bebop.publish(cmd_vel_bebop);
+		if ((end_time-start_time) >= 0.013*360){
+			turning_mode = 0;
+			printf("HERE\n");	
+			cmd_vel_bebop.linear.x = 0;
+			cmd_vel_bebop.linear.y = 0;
+			cmd_vel_bebop.linear.z = 0;
+			cmd_vel_bebop.angular.z = 0;
+			cmd_vel_pub_bebop.publish(cmd_vel_bebop); 
+		
+			turning_mode360 = 0;
+			following_system_armed = 1;
+			forget_red = true;
+		
+
+			
+			
+		}
+                
+		
 	}
+
+
+
 
 
 	if(following_system_armed)
@@ -642,131 +1043,212 @@ void move_drone(cv::Mat& image)
 		cv::putText(image, "Following System ARMED", cv::Point(0,image.cols/2), intFontFace, dblFontScale, cv::Scalar(0,255,0), intFontThickness);
 
 
-		if(!no_object && follow_orange){
-			//cmd_vel_bebop.linear.x = bebop_velocity;
+		if(!no_objectCano && !first_object){
+		
 			
-			cmd_vel_bebop.linear.x = 0.17;
-			if (posX > drone_center.x+30)
-			{	
-				//printf("turning left");
-				cmd_vel_bebop.angular.z = -0.1;
-				cmd_vel_bebop.linear.y = -0.2;		
-			}
-			if (posX < drone_center.x-30)
-			{	
-				//printf("turning right");
-				cmd_vel_bebop.angular.z = 0.1;
-				cmd_vel_bebop.linear.y = 0.2;
-			}
-			
+			cmd_vel_bebop.linear.x = 0.2/bebop_value;	
 
-			if ((posX < drone_center.x+10) && (posX > drone_center.x-10)){
-				//land_bebop.publish(land);
-				cmd_vel_bebop.linear.y = 0.0;
-				cmd_vel_bebop.linear.z = 0.0;
-				cmd_vel_bebop.angular.z = 0.0;
-								//tracking_system_armed = 1 - tracking_system_armed;
-				//ros::Duration(5.0).sleep();
+			//if (Turns==1){
 
-			}
-			cmd_vel_pub_bebop.publish(cmd_vel_bebop);
-
-			
-		}
-
-		if(!no_objectRed && !forget_red){
-			follow_orange = 0;
-			printf("PXred PYred %d %d\n",posXRed,posYRed);
-		//cmd_vel_bebop.linear.x = 0.0;
-		//cmd_vel_bebop.linear.y = 0.0;		
-		//cmd_vel_bebop.linear.z = 0.0;
-		//cmd_vel_bebop.angular.z = 0.0;
-		//cmd_vel_pub_bebop.publish(cmd_vel_bebop);
-		if (posYRed > drone_center.y+20)
-			{	
-				cmd_vel_bebop.linear.x = -bebop_velocity;		
-			}
-			if (posYRed < drone_center.y-20)
-			{	
-				cmd_vel_bebop.linear.x = bebop_velocity;
-			}
-			cmd_vel_pub_bebop.publish(cmd_vel_bebop);
-
-		//cmd_vel_bebop.linear.x = 0.17;
-			if (posXRed > drone_center.x+10)
-			{	
-				//printf("turning left");
-				cmd_vel_bebop.angular.z = -0.1;
-				cmd_vel_bebop.linear.y = -0.2;		
-			}
-			if (posXRed < drone_center.x-10)
-			{	
-				//printf("turning right");
-				cmd_vel_bebop.angular.z = 0.1;
-				cmd_vel_bebop.linear.y = 0.2;
-			}
-			
-
-
-			if ((posX < drone_center.x+10) && (posX > drone_center.x-10) &&(posYRed < drone_center.y+20) &&(posYRed > drone_center.y-20))
-			{
-				following_system_armed =0;
-				turning_mode = 1;
-				angle_to_turn = 440;
-				cmd_vel_bebop.linear.x = 0.0;
-				cmd_vel_bebop.linear.y = 0.0;
-				cmd_vel_bebop.linear.z = 0.0;
-				cmd_vel_bebop.angular.z = 0.0;
-				start_time = time(NULL);
-
-
-			}
-			cmd_vel_pub_bebop.publish(cmd_vel_bebop);
-		}
-
-		if(!no_object && forget_red){
-			//forget_red =0;
-		}
-
+				if (posXCano > drone_center.x+30)
+					{
+					
+					cmd_vel_bebop.angular.z = -0.3/bebop_value;
+					cmd_vel_bebop.linear.y = -0.2/bebop_value;		
+				}else{
+					if (posXCano < drone_center.x-30)
+						{
+					
+						cmd_vel_bebop.angular.z = 0.3/bebop_value;
+						cmd_vel_bebop.linear.y = 0.2/bebop_value;
+						}
+					else{
+					
+							cmd_vel_bebop.angular.z = ((0.3/bebop_value)*int(drone_center.x-posX)/100);
+							cmd_vel_bebop.linear.y = ((0.2/bebop_value)*int(drone_center.x-posX)/100);
+							
+						
+				
+						}
+					}
 
 		
-		if(no_object){
+	
+	
+					cmd_vel_pub_bebop.publish(cmd_vel_bebop);
+			}
+		if(no_objectCano){
 			
 				printf("noo object\n");
 				cmd_vel_bebop.linear.x = 0.0;
 				cmd_vel_bebop.linear.y = 0.0;
 				cmd_vel_bebop.linear.z = 0.0;
 				cmd_vel_bebop.angular.z = 0.0;
-				if(angle_to_turn==180){
+				cmd_vel_pub_bebop.publish(cmd_vel_bebop);
+
+				if(Turns==0){
+					Turns += 1;
+					angle_to_turn = 180;
+					turning_speed = 3;
+				}
+				else{
+					Turns += 1;
 					angle_to_turn = 70;
 					turning_speed = -3;
 				}
 					
-				if (angle_to_turn == 10){
-					angle_to_turn = 180;
-
-				}	
+				
 				start_time = time(NULL);
-				//Turns = 1;
 				following_system_armed = 0;
-				turning_mode = 1;
+				turning_mode = 1;	
+			
+
 		
+		}
+		if (Turns==0){
+			if(forget_red){
+				if(no_objectRed){
+					forget_red =false;
+				}
+			}else{
+
+				if(!no_objectRed){
+					following_system_armed = 0;
+					following_red_armed = 1;
+				}
+			}
+		}
+
+	}
+
+	
+
+
+
+
+
+	if(following_red_armed)
+	{
+		
+		int intFontFace = CV_FONT_HERSHEY_SIMPLEX;
+		//double dblFontScale = 0.75;
+		double dblFontScale = 1;
+		int intFontThickness = 2;
+		//cv::putText(image, "Tracking System ARMED", cv::Point(0,image.cols-175), intFontFace, dblFontScale, cv::Scalar(0,255,0), intFontThickness);
+		cv::putText(image, "Red System ARMED", cv::Point(0,image.cols/2), intFontFace, dblFontScale, cv::Scalar(0,255,0), intFontThickness);
+
+
+
+		if(!no_objectRed){
 			
+			if (posYRed > drone_center.y+20)
+			{	
+				cmd_vel_bebop.linear.x = -0.1/bebop_value;		
+			}else{
+				if (posYRed < drone_center.y-20)
+				{	
+					cmd_vel_bebop.linear.x = 0.1/bebop_value;
+				}
+				else{
+					//printf("meu VALOR %f\n",(0.1*int(drone_center.x-posX)/100));
+					cmd_vel_bebop.linear.x = ((0.1/bebop_value)*int(drone_center.x-posX)/100);
+				}
+			}
+		
+
 			
+
+
+			//if (Turns==1){
+
+				if (posXRed > drone_center.x+30)
+					{
+					
+					cmd_vel_bebop.angular.z = -0.3/bebop_value;
+					cmd_vel_bebop.linear.y = -0.2/bebop_value;		
+				}else{
+					if (posXRed < drone_center.x-30)
+						{
+						printf("absoluto2 %f\n", pid_alt.mis(std::abs(int(drone_center.x-posX)),0)/100);	
+						cmd_vel_bebop.angular.z = 0.3/bebop_value;
+						cmd_vel_bebop.linear.y = 0.2/bebop_value;
+						}
+					else{
+					
+							cmd_vel_bebop.angular.z = ((0.3/bebop_value)*int(drone_center.x-posX)/100);
+							cmd_vel_bebop.linear.y = ((0.2/bebop_value)*int(drone_center.x-posX)/100);
+							printf("meu VALOR %f\n",cmd_vel_bebop.linear.y);
+						
+				
+						}
+					}
+
+					
+				if ((posXRed < drone_center.x+20) && (posXRed > drone_center.x-20) &&(posYRed < drone_center.y+20) &&(posYRed > drone_center.y-20) ){
+					cmd_vel_bebop.linear.x = 0.0;
+					cmd_vel_bebop.linear.y = 0.0;		
+					cmd_vel_bebop.linear.z = 0.0;
+					cmd_vel_bebop.angular.z = 0.0;
+					//cmd_vel_pub_bebop.publish(cmd_vel_bebop);
+					//land_bebop.publish(land);
+					start_time=time(NULL);
+					following_red_armed = 0;
+					turning_mode360 = 1;
+
+					//ros::Duration(5.0).sleep();
+					//takeoff_bebop.publish(take_off);
+					//ros::Duration(5.0).sleep();
+					tracking_system_armed = 0;
+					turning_mode= 0 ;
+					landing_mode = 0;
+					angle_to_turn = 10;
+					following_system_armed = 0;
+
+				
+				}
+	
+	
+					cmd_vel_pub_bebop.publish(cmd_vel_bebop);
+			}
+
+		/*
+		if(!no_objectCano && first_object){
+			cmd_vel_bebop.linear.x = 0.5/bebop_value;
+			cmd_vel_bebop.linear.y = 0.0;
+			cmd_vel_bebop.angular.z = 0.0;
+			
+			//if (Turns==1){
+			//	cmd_vel_bebop.linear.z = 0.01;
+			//}
 			cmd_vel_pub_bebop.publish(cmd_vel_bebop);
 
 
 		
 		}
+		if(no_objectCano){
+			first_object = false;
+			cmd_vel_bebop.linear.x = 0.5/bebop_value;
+			cmd_vel_bebop.linear.y = 0.0;
+			cmd_vel_bebop.angular.z = 0.0;
+			
+			//if (Turns==1){
+			//	cmd_vel_bebop.linear.z = 0.01;
+			//}
+			cmd_vel_pub_bebop.publish(cmd_vel_bebop);
+
+
+		
+		}
+		*/
 
 	}
 	else
 	{
 		//hover();	
 	}
-	
-	
+
 }
+
 void messageCallback(const nav_msgs::Odometry::ConstPtr& msg){
 	float orX;
 	float orY;
@@ -906,10 +1388,11 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
 	try		
 	{
 		cv_original = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);	//Copying the image and encoding it into BGR according to opencv default settings
-		iHighV = 255;
+		//iHighV = 255;
+		discriminate_color2(cv_original->image);
+		//iHighV = 251;
 		discriminate_color(cv_original->image);
-		iHighV = 251;
-		discriminate_color(cv_original->image);				//Discriminate colors
+		discriminate_color3(cv_original->image);					//Discriminate colors
 		cv::Mat final_img = cv_original->image.clone();			//Clone the original image
 		c_drone(final_img);
 		//imprime_odometry();						//Figures out bebop's center and draws a circle
@@ -924,7 +1407,7 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
 		if(key == 'k')		
 		{
 			tracking_system_armed = 1 - tracking_system_armed;
-	
+			first_object = true;
 			if(tracking_system_armed)
 			{
 				ROS_INFO("TRACKING SYSTEM ARMED!!!");
@@ -974,6 +1457,7 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
 			tracking_system_armed = 0;
 			turning_mode= 0 ;
 			following_system_armed = 0;
+			turning_mode360 = 0;
 
 
 		}
